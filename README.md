@@ -7,7 +7,7 @@ Python tool to fetch IPv4 ranges of given country in host and cidr format.
 ```
 $ ipcountry -H
 
---==[ ipcountry.py by nullsecurity.net ]==--
+--==[ ipcountry by nullsecurity.net ]==--
 
 usage
 
