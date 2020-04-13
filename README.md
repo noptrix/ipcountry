@@ -35,6 +35,10 @@ noptrix
 - My master-branches are always dev-branches; use releases for stable versions.
 - All of my public stuff you find are officially announced and published via [nullsecurity.net](https://www.nullsecurity.net).
 
+# LICENSE
+
+Check docs/LICENSE.
+
 # Disclaimer
 
 We hereby emphasize, that the hacking related stuff found on
