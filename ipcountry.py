@@ -22,37 +22,46 @@ import os
 import sys
 import getopt
 import requests
-import bs4
+#import bs4
 import ipaddress
 import warnings
 
 
 __author__ = 'noptrix'
-__version__ = '1.0'
+__version__ = '1.1'
 __copyright__ = 'santa clause'
 __license__ = '1337 h4x0r'
 
-NORM = '\033[0;37;40m'
-BOLD = '\033[1;37;40m'
-RED = '\033[1;31;40m'
-GREEN = '\033[1;32;40m'
-YELLOW = '\033[1;33;40m'
-BLUE = '\033[1;34;40m'
+NORM = '\033[0m'
+BOLD = '\033[1;37;10m'
+RED = '\033[1;31;10m'
+GREEN = '\033[1;32;10m'
+YELLOW = '\033[1;33;10m'
+BLUE = '\033[1;34;10m'
 
 SUCCESS = 0
 FAILURE = 1
 
 UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:75.0) Gecko/20100101 Firefox/75.0'
 
-BANNER = '--==[ ipcountry by nullsecurity.net ]==--\n\n'
+BANNER = BLUE + '''\
+    _                              __
+   (_)___  _________  __  ______  / /________  __
+  / / __ \/ ___/ __ \/ / / / __ \/ __/ ___/ / / /
+ / / /_/ / /__/ /_/ / /_/ / / / / /_/ /  / /_/ /
+/_/ .___/\___/\____/\__,_/_/ /_/\__/_/   \__, /
+ /_/                                    /____/
+''' + NORM + '''
+      --== [ by nullsecurity.net ] ==--'''
 
 HELP = BOLD + '''usage''' + NORM + '''
 
-  ipcountry.py -c <arg> [options] | <misc>
+  ipcountry -c <arg> [options] | <misc>
 
 ''' + BOLD + '''options''' + NORM + '''
 
-  -c <country>  - country name
+  -c <country>  - full country name
+  -t <type>     - ipv4 range type to fetch (default: 'host,cidr')
 
 ''' + BOLD + '''misc''' + NORM + '''
 
@@ -61,6 +70,11 @@ HELP = BOLD + '''usage''' + NORM + '''
   -H            - print this help
 
 '''
+
+
+opts = {
+  'type': ['cidr', 'host'],
+}
 
 
 def list_countries():
@@ -343,10 +357,11 @@ def list_countries():
   return
 
 
-def host_range(country):
-  url = 'http://services.ce3c.be/ciprg/?countrys={}'.format(country)
+def host_range(country, sess):
+  url = f'http://services.ce3c.be/ciprg/?countrys={country}'
+
   try:
-    res = requests.get(url, verify=False, timeout=3)
+    res = sess.get(url, verify=False, timeout=3)
     if len(res.content) == 0:
       os.remove(f'{country}-host.txt')
       os.remove(f'{country}-cidr.txt')
@@ -369,17 +384,19 @@ def check_argv(opts):
 
 
 def parse_cmdline():
-  _opts = {}
+  global opts
   try:
-    opts, args = getopt.getopt(sys.argv[1:], 'c:f:lVH')
-    for o, a in opts:
+    _opts, args = getopt.getopt(sys.argv[1:], 'c:t:f:lVH')
+    for o, a in _opts:
       if o == '-c':
-        _opts['country'] = a
+        opts['country'] = a
+      if o == '-t':
+        opts['type'] = a.split(',')
       if o == '-l':
         list_countries()
         sys.exit(SUCCESS)
       if o == '-V':
-        log(f'ipcountry.py v{__version__}', 'info')
+        log(f'ipcountry v{__version__}', 'info')
         sys.exit(SUCCESS)
       if o == '-H':
         log(HELP)
@@ -389,7 +406,7 @@ def parse_cmdline():
   except Exception as err:
     log('unknown error', 'error')
 
-  return _opts
+  return
 
 
 def check_argc():
@@ -399,7 +416,7 @@ def check_argc():
   return
 
 
-def log(msg='', _type='normal', pref='', suf='\n'):
+def log(msg='', _type='normal', pref='', suf='\n', logfile=False):
   iprefix = f'{BOLD}{BLUE}[+]{NORM} '
   gprefix = f'{BOLD}{GREEN}[*]{NORM} '
   wprefix = f'{BOLD}{YELLOW}[!]{NORM} '
@@ -424,28 +441,36 @@ def log(msg='', _type='normal', pref='', suf='\n'):
     for i in ('-', '\\', '|', '/'):
       sys.stderr.write(f'\r{BOLD}{BLUE}[{i}]{NORM}{msg} ')
       time.sleep(0.01)
+  elif _type == 'file':
+    try:
+      print(msg, file=logfile)
+    except:
+      log('could not open or write to file', 'error')
 
   return
 
 
 def main():
-  warnings.simplefilter('ignore')
-  log(BANNER)
+  log(f'{BANNER}\n\n')
   check_argc()
-  opts = parse_cmdline()
+  parse_cmdline()
   check_argv(opts)
 
-  log(f"getting ip-address ranges in for: {opts['country']}", 'info')
-  with open('{}-host.txt'.format(opts['country']), '+a') as f:
-    for x in host_range(opts['country']):
-      print(x, file=f)
-  with open(f"{opts['country']}-cidr.txt", '+a') as f:
-    for x in host_range(opts['country']):
-      splitted = x.split('-')
-      startip = ipaddress.IPv4Address(splitted[0])
-      endip = ipaddress.IPv4Address(splitted[1])
-      for addr in ipaddress.summarize_address_range(startip, endip):
-        print(addr, file=f)
+  s = requests.Session()
+  if 'host' in opts['type']:
+    log(f"fetching ipv4 host-ranges for {opts['country']}", 'info')
+    with open(f"{opts['country']}-host.txt", '+a') as f:
+      for x in host_range(opts['country'], s):
+        log(x, _type='file', logfile=f)
+  if 'cidr' in opts['type']:
+    log(f"fetching ipv4 cidr-ranges for {opts['country']}", 'info')
+    with open(f"{opts['country']}-cidr.txt", '+a') as f:
+      for x in host_range(opts['country'], s):
+        splitted = x.split('-')
+        startip = ipaddress.IPv4Address(splitted[0])
+        endip = ipaddress.IPv4Address(splitted[1])
+        for addr in ipaddress.summarize_address_range(startip, endip):
+          log(addr, _type='file', logfile=f)
   log(f"saved results to: {opts['country']}-*.txt", 'good')
   log('game over', 'info')
 
@@ -453,6 +478,7 @@ def main():
 
 
 if __name__ == '__main__':
+  warnings.simplefilter('ignore')
   main()
 
 
