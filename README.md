@@ -6,23 +6,29 @@ Python tool to fetch IPv4 ranges of given country in host and cidr format.
 
 ```
 $ ipcountry -H
+    _                              __
+   (_)___  _________  __  ______  / /________  __
+  / / __ \/ ___/ __ \/ / / / __ \/ __/ ___/ / / /
+ / / /_/ / /__/ /_/ / /_/ / / / / /_/ /  / /_/ /
+/_/ .___/\___/\____/\__,_/_/ /_/\__/_/   \__, /
+ /_/                                    /____/
 
---==[ ipcountry by nullsecurity.net ]==--
+      --== [ by nullsecurity.net ] ==--
 
 usage
 
-  ipcountry.py -c <arg> [options] | <misc>
+  ipcountry -c <arg> [options] | <misc>
 
 options
 
-  -c <country>  - country name
+  -c <country>  - full country name
+  -t <type>     - ipv4 range type to fetch (default: 'host,cidr')
 
 misc
 
   -l            - list all countries by name
   -V            - print version information
   -H            - print this help
-
 ```
 
 # Author
