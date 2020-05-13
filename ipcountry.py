@@ -28,7 +28,7 @@ import warnings
 
 
 __author__ = 'noptrix'
-__version__ = '1.1'
+__version__ = '1.2'
 __copyright__ = 'santa clause'
 __license__ = '1337 h4x0r'
 
@@ -70,7 +70,6 @@ HELP = BOLD + '''usage''' + NORM + '''
   -H            - print this help
 
 '''
-
 
 opts = {
   'type': ['cidr', 'host'],
@@ -460,18 +459,22 @@ def main():
   if 'host' in opts['type']:
     log(f"fetching ipv4 host-ranges for {opts['country']}", 'info')
     with open(f"{opts['country']}-host.txt", '+a') as f:
-      for x in host_range(opts['country'], s):
+      for i, x in enumerate(host_range(opts['country'], s)):
         log(x, _type='file', logfile=f)
   if 'cidr' in opts['type']:
     log(f"fetching ipv4 cidr-ranges for {opts['country']}", 'info')
     with open(f"{opts['country']}-cidr.txt", '+a') as f:
-      for x in host_range(opts['country'], s):
+      for i, x in enumerate(host_range(opts['country'], s)):
         splitted = x.split('-')
         startip = ipaddress.IPv4Address(splitted[0])
         endip = ipaddress.IPv4Address(splitted[1])
         for addr in ipaddress.summarize_address_range(startip, endip):
           log(addr, _type='file', logfile=f)
-  log(f"saved results to: {opts['country']}-*.txt", 'good')
+  log(f'found {i} ranges for {opts["country"]}', 'good')
+  if 'cidr' in opts['type'] and 'host' in opts['type']:
+    log(f"saved results to: {opts['country']}-*.txt", 'good')
+  else:
+    log(f"saved results to: {opts['country']}-{opts['type'][0]}.txt", 'good')
   log('game over', 'info')
 
   return
