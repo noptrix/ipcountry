@@ -1,6 +1,6 @@
 # Description
 
-Python tool to fetch IPv4 ranges of given country in host and cidr format.
+Python tool to fetch IP ranges of given country in host and cidr format.
 
 # Usage
 
