@@ -21,14 +21,15 @@ usage
 
 options
 
-  -c <country>  - full country name
-  -t <type>     - ipv4 range type to fetch (default: 'host,cidr')
+  -c <code>   - country code, e.g.: am,gr,...
+  -t <type>   - ip range type to fetch (default: 'host,cidr')
+  -i          - get ipv6 ranges
 
 misc
 
-  -l            - list all countries by name
-  -V            - print version information
-  -H            - print this help
+  -l          - list all country codes and their full name
+  -V          - print version information
+  -H          - print this help
 ```
 
 # Author

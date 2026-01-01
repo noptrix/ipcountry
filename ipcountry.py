@@ -7,7 +7,7 @@
 #                                            /___/ team                        #
 #                                                                              #
 # ipcountry                                                                    #
-# Fetches IPv4 ranges of given country in host and cidr format.                #
+# Fetches IP ranges of given country in host and cidr format.                  #
 #                                                                              #
 # NOTES                                                                        #
 # - quick'n'dirty                                                              #
@@ -60,7 +60,7 @@ HELP = BOLD + '''usage''' + NORM + '''
 ''' + BOLD + '''options''' + NORM + '''
 
   -c <code>   - country code, e.g.: am,gr,...
-  -t <type>   - ipv4 range type to fetch (default: 'host,cidr')
+  -t <type>   - ip range type to fetch (default: 'host,cidr')
   -i          - get ipv6 ranges
 
 ''' + BOLD + '''misc''' + NORM + '''
