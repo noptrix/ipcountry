@@ -28,7 +28,7 @@ import warnings
 
 
 __author__ = 'noptrix'
-__version__ = '2.0'
+__version__ = '2.1'
 __copyright__ = 'santa clause'
 __license__ = '1337 h4x0r'
 
