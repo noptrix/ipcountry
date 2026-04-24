@@ -20,6 +20,8 @@
 
 import os
 import sys
+import time
+import shutil
 import getopt
 import requests
 import ipaddress
@@ -28,7 +30,7 @@ import warnings
 
 
 __author__ = 'noptrix'
-__version__ = '2.1'
+__version__ = '2.2'
 __copyright__ = 'santa clause'
 __license__ = '1337 h4x0r'
 
@@ -62,6 +64,7 @@ HELP = BOLD + '''usage''' + NORM + '''
   -c <code>   - country code, e.g.: am,gr,...
   -t <type>   - ip range type to fetch (default: 'host,cidr')
   -i          - get ipv6 ranges
+  -r          - remove downloaded tar.gz and extracted zones dir after processing
 
 ''' + BOLD + '''misc''' + NORM + '''
 
@@ -69,11 +72,29 @@ HELP = BOLD + '''usage''' + NORM + '''
   -V          - print version information
   -H          - print this help
 
+''' + BOLD + '''examples''' + NORM + '''
+
+  # fetch ipv4 cidr and host ranges for germany
+  $ ipcountry -c am
+
+  # fetch only cidr ranges for russia
+  $ ipcountry -c gr -t cidr
+
+  # fetch only host ranges for multiple countries
+  $ ipcountry -c am,gr,cy -t host
+
+  # fetch ipv6 ranges and remove tar.gz + zones dir afterwards
+  $ ipcountry -c am -i -r
+
+  # list all available country codes
+  $ ipcountry -l
+
 '''
 
 opts = {
   'type': ['cidr', 'host'],
   'ipv6': False,
+  'cleanup': False,
 }
 
 
@@ -346,7 +367,7 @@ def check_argv(opts):
 def parse_cmdline():
   global opts
   try:
-    _opts, args = getopt.getopt(sys.argv[1:], 'c:t:ilVH')
+    _opts, args = getopt.getopt(sys.argv[1:], 'c:t:ilrVH')
     for o, a in _opts:
       if o == '-c':
         opts['codes'] = a.split(',')
@@ -354,6 +375,8 @@ def parse_cmdline():
         opts['type'] = a.split(',')
       if o == '-i':
         opts['ipv6'] = True
+      if o == '-r':
+        opts['cleanup'] = True
       if o == '-l':
         list_countries()
         sys.exit(SUCCESS)
@@ -372,7 +395,7 @@ def parse_cmdline():
 
 
 def check_argc():
-  if len(sys.argv) == 0:
+  if len(sys.argv) < 2:
     log('use -H for help', 'error')
 
   return
@@ -437,6 +460,25 @@ def download_and_extract_zones():
   return
 
 
+def cleanup_zones():
+  if opts['ipv6']:
+    tar_file = 'ipv6-all-zones.tar.gz'
+    zones_dir = 'zones6'
+  else:
+    tar_file = 'all-zones.tar.gz'
+    zones_dir = 'zones'
+
+  if os.path.isfile(tar_file):
+    os.remove(tar_file)
+    log(f'removed {tar_file}', 'info')
+
+  if os.path.isdir(zones_dir):
+    shutil.rmtree(zones_dir)
+    log(f'removed {zones_dir}/', 'info')
+
+  return
+
+
 def process_country_file(country_code):
   if opts['ipv6']:
     zone_file_path = f'zones6/{country_code}.zone'
@@ -465,11 +507,16 @@ def process_country_file(country_code):
           try:
             network = ipaddress.IPv6Network(cidr) if opts['ipv6'] else \
               ipaddress.IPv4Network(cidr)
-            start_ip = network.network_address + 1
-            end_ip = network.broadcast_address - 1
-            host_file.write(f'{start_ip}-{end_ip}\n')
+            if network.num_addresses == 1:
+              host_file.write(f'{network.network_address}\n')
+            elif network.num_addresses == 2:
+              host_file.write(f'{network.network_address}-{network.broadcast_address}\n')
+            else:
+              start_ip = network.network_address + 1
+              end_ip = network.broadcast_address - 1
+              host_file.write(f'{start_ip}-{end_ip}\n')
           except ValueError as e:
-            log(f'error processing line: {line} ({e})', 'error')
+            log(f'error processing line: {line} ({e})', 'warn')
 
   if cidr_file:
     cidr_file.close()
@@ -497,6 +544,9 @@ def main():
 
   for code in opts['codes']:
     process_country_file(code.strip())
+
+  if opts['cleanup']:
+    cleanup_zones()
 
   log('game over', 'info')
 
