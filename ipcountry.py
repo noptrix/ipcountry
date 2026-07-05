@@ -21,6 +21,8 @@
 import os
 import sys
 import time
+import json
+import bisect
 import shutil
 import getopt
 import requests
@@ -30,7 +32,7 @@ import warnings
 
 
 __author__ = 'noptrix'
-__version__ = '2.2'
+__version__ = '2.3'
 __copyright__ = 'santa clause'
 __license__ = '1337 h4x0r'
 
@@ -57,12 +59,18 @@ BANNER = BLUE + r'''    _                              __
 
 HELP = BOLD + '''usage''' + NORM + '''
 
-  ipcountry -c <arg> [options] | <misc>
+  ipcountry <mode> [options] | <misc>
+
+''' + BOLD + '''mode''' + NORM + '''
+
+  -c <code>   - fetch ip ranges for country code(s), e.g.: am,gr,... ('all' = every one)
+  -x <ip>     - reverse lookup ip(s) -> country code ('-' reads ips from stdin)
 
 ''' + BOLD + '''options''' + NORM + '''
 
-  -c <code>   - country code, e.g.: am,gr,...
   -t <type>   - ip range type to fetch (default: 'host,cidr')
+  -o <file>   - write ranges to <file> ('-' for stdout) instead of per-country files
+  -j          - write ranges as jsonl (one {country,type,range} object per line)
   -i          - get ipv6 ranges
   -r          - remove downloaded tar.gz and extracted zones dir after processing
 
@@ -74,20 +82,17 @@ HELP = BOLD + '''usage''' + NORM + '''
 
 ''' + BOLD + '''examples''' + NORM + '''
 
-  # fetch ipv4 cidr and host ranges for germany
-  $ ipcountry -c am
+  # fetch cidr + host ranges for multiple countries
+  $ ipcountry -c am,gr,cy
 
-  # fetch only cidr ranges for russia
-  $ ipcountry -c gr -t cidr
+  # fetch ranges for all countries at once
+  $ ipcountry -c all
 
-  # fetch only host ranges for multiple countries
-  $ ipcountry -c am,gr,cy -t host
+  # stream ranges to stdout for piping ('-' = stdout)
+  $ ipcountry -c ru -t cidr -o -
 
-  # fetch ipv6 ranges and remove tar.gz + zones dir afterwards
-  $ ipcountry -c am -i -r
-
-  # list all available country codes
-  $ ipcountry -l
+  # reverse lookup: which country owns an ip ('-' reads ips from stdin)
+  $ ipcountry -x 8.8.8.8
 
 '''
 
@@ -98,8 +103,7 @@ opts = {
 }
 
 
-def list_countries():
-  countries = {
+COUNTRIES = {
     'af': 'Afghanistan',
     'ax': 'Åland',
     'al': 'Albania',
@@ -348,15 +352,36 @@ def list_countries():
     'ye': 'Yemen',
     'zm': 'Zambia',
     'zw': 'Zimbabwe'
-  }
-  for i, j in countries.items():
-    log(f'{i} ({j})', 'verbose')
+}
+
+
+def list_countries():
+  for code, name in COUNTRIES.items():
+    log(f'{code} ({name})', 'verbose')
+
+  return
+
+
+def validate_codes(codes):
+  unknown = [c for c in codes if c != 'all' and c not in COUNTRIES]
+  if unknown:
+    log(f'unknown country code(s): {", ".join(unknown)} (use -l to list codes)',
+        'warn')
+
+  return
+
+
+def validate_types():
+  invalid = [t for t in opts['type'] if t not in ('cidr', 'host')]
+  if invalid:
+    log(f'invalid range type(s): {", ".join(invalid)} (valid: cidr, host)',
+        'error')
 
   return
 
 
 def check_argv(opts):
-  needed = ['-c', '-l', '-V', '-H']
+  needed = ['-c', '-x', '-l', '-V', '-H']
 
   if set(needed).isdisjoint(set(sys.argv)):
     log('use -H for help', 'error')
@@ -367,12 +392,18 @@ def check_argv(opts):
 def parse_cmdline():
   global opts
   try:
-    _opts, args = getopt.getopt(sys.argv[1:], 'c:t:ilrVH')
+    _opts, args = getopt.getopt(sys.argv[1:], 'c:t:o:x:jilrVH')
     for o, a in _opts:
       if o == '-c':
         opts['codes'] = a.split(',')
       if o == '-t':
         opts['type'] = a.split(',')
+      if o == '-o':
+        opts['outfile'] = a
+      if o == '-x':
+        opts['reverse'] = a.split(',')
+      if o == '-j':
+        opts['json'] = True
       if o == '-i':
         opts['ipv6'] = True
       if o == '-r':
@@ -435,29 +466,46 @@ def log(msg='', _type='normal', pref='', suf='\n', logfile=False):
   return
 
 
-def download_and_extract_zones():
-  if opts['ipv6']:
-    log('downloading ipv6-all-zones.tar.gz', 'info')
+def download_and_extract_zones(ipv6=None):
+  if ipv6 is None:
+    ipv6 = opts['ipv6']
+
+  if ipv6:
     url = 'https://www.ipdeny.com/ipv6/ipaddresses/blocks/ipv6-all-zones.tar.gz'
-    response = requests.get(url, headers={'User-Agent': UA})
-    with open('ipv6-all-zones.tar.gz', 'wb') as f:
-      f.write(response.content)
-
-    log('extracting ipv6-all-zones.tar.gz', 'info')
-    with tarfile.open('ipv6-all-zones.tar.gz', 'r:gz') as tar:
-      tar.extractall(path='zones6', filter=None)
+    tar_file = 'ipv6-all-zones.tar.gz'
+    zones_dir = 'zones6'
   else:
-    log('downloading all-zones.tar.gz', 'info')
     url = 'https://www.ipdeny.com/ipblocks/data/countries/all-zones.tar.gz'
-    response = requests.get(url, headers={'User-Agent': UA})
-    with open('all-zones.tar.gz', 'wb') as f:
-      f.write(response.content)
+    tar_file = 'all-zones.tar.gz'
+    zones_dir = 'zones'
 
-    log('extracting all-zones.tar.gz', 'info')
-    with tarfile.open('all-zones.tar.gz', 'r:gz') as tar:
-      tar.extractall(path='zones', filter=None)
+  log(f'downloading {tar_file}', 'info')
+  try:
+    response = requests.get(url, headers={'User-Agent': UA}, timeout=30)
+    response.raise_for_status()
+  except requests.RequestException as err:
+    log(f'download failed: {err}', 'error')
+
+  with open(tar_file, 'wb') as f:
+    f.write(response.content)
+
+  log(f'extracting {tar_file}', 'info')
+  try:
+    with tarfile.open(tar_file, 'r:gz') as tar:
+      tar.extractall(path=zones_dir, filter=None)
+  except tarfile.TarError as err:
+    log(f'could not extract {tar_file}: {err}', 'error')
 
   return
+
+
+def ensure_zones(ipv6):
+  zones_dir = 'zones6' if ipv6 else 'zones'
+  if not os.path.isdir(zones_dir) or not any(
+      f.endswith('.zone') for f in os.listdir(zones_dir)):
+    download_and_extract_zones(ipv6)
+
+  return zones_dir
 
 
 def cleanup_zones():
@@ -479,6 +527,93 @@ def cleanup_zones():
   return
 
 
+def cidr_to_hostrange(cidr):
+  network = ipaddress.IPv6Network(cidr) if opts['ipv6'] else \
+    ipaddress.IPv4Network(cidr)
+  if network.num_addresses == 1:
+    return f'{network.network_address}'
+  elif network.num_addresses == 2:
+    return f'{network.network_address}-{network.broadcast_address}'
+  return f'{network.network_address + 1}-{network.broadcast_address - 1}'
+
+
+def build_reverse_index(zones_dir):
+  index = []
+  for fname in os.listdir(zones_dir):
+    if not fname.endswith('.zone'):
+      continue
+    code = fname[:-len('.zone')]
+    with open(os.path.join(zones_dir, fname), 'r') as f:
+      for line in f:
+        cidr = line.strip()
+        if not cidr:
+          continue
+        try:
+          network = ipaddress.ip_network(cidr, strict=False)
+        except ValueError:
+          continue
+        index.append((int(network.network_address),
+                      int(network.broadcast_address), code))
+  index.sort()
+
+  return index
+
+
+def lookup_in_index(index, ip):
+  ip_int = int(ip)
+  # rightmost range whose start <= ip, then walk back through any enclosing nets
+  j = bisect.bisect_right(index, (ip_int, float('inf'))) - 1
+  while j >= 0 and index[j][0] <= ip_int:
+    if ip_int <= index[j][1]:
+      return index[j][2]
+    j -= 1
+
+  return None
+
+
+def reverse_lookup(targets):
+  raw = []
+  for t in targets:
+    if t == '-':
+      for line in sys.stdin:
+        line = line.strip()
+        if line:
+          raw.append(line)
+    else:
+      raw.append(t)
+
+  parsed = []
+  need = {4: False, 6: False}
+  for s in raw:
+    try:
+      ip = ipaddress.ip_address(s)
+    except ValueError:
+      log(f'invalid ip: {s}', 'warn')
+      parsed.append((s, None))
+      continue
+    parsed.append((s, ip))
+    need[ip.version] = True
+
+  indexes = {}
+  if need[4]:
+    indexes[4] = build_reverse_index(ensure_zones(False))
+  if need[6]:
+    indexes[6] = build_reverse_index(ensure_zones(True))
+
+  out = opts.get('out') or sys.stdout
+  for s, ip in parsed:
+    if ip is None:
+      out.write(f'{s}\t-\n')
+      continue
+    code = lookup_in_index(indexes[ip.version], ip)
+    if code:
+      out.write(f'{s}\t{code}\t{COUNTRIES.get(code, "?")}\n')
+    else:
+      out.write(f'{s}\t-\n')
+
+  return
+
+
 def process_country_file(country_code):
   if opts['ipv6']:
     zone_file_path = f'zones6/{country_code}.zone'
@@ -486,64 +621,110 @@ def process_country_file(country_code):
     zone_file_path = f'zones/{country_code}.zone'
 
   if not os.path.exists(zone_file_path):
-    log(f'zone file for \'{country_code}\' not found', 'error')
+    log(f'zone file for \'{country_code}\' not found', 'warn')
     return
 
   log(f'processing \'{country_code}\'', 'info')
 
-  cidr_file = open(f'{country_code}-cidr.txt', 'w') if 'cidr' in opts['type'] \
-    else None
-  host_file = open(f'{country_code}-host.txt', 'w') if 'host' in opts['type'] \
-    else None
+  out = opts.get('out')
+
+  if opts.get('json'):
+    json_file = out if out else open(f'{country_code}.jsonl', 'w')
+    with open(zone_file_path, 'r') as zone_file:
+      for line in zone_file:
+        cidr = line.strip()
+        if not cidr:
+          continue
+        if 'cidr' in opts['type']:
+          json_file.write(json.dumps(
+            {'country': country_code, 'type': 'cidr', 'range': cidr}) + '\n')
+        if 'host' in opts['type']:
+          try:
+            hostrange = cidr_to_hostrange(cidr)
+          except ValueError as e:
+            log(f'error processing line: {cidr} ({e})', 'warn')
+            continue
+          json_file.write(json.dumps(
+            {'country': country_code, 'type': 'host', 'range': hostrange}) + '\n')
+
+    if not out:
+      json_file.close()
+      log(f'ip ranges for {country_code} saved to {country_code}.jsonl', 'good')
+    return
+
+  cidr_file = (out if out else open(f'{country_code}-cidr.list', 'w')) \
+    if 'cidr' in opts['type'] else None
+  host_file = (out if out else open(f'{country_code}-host.list', 'w')) \
+    if 'host' in opts['type'] else None
 
   with open(zone_file_path, 'r') as zone_file:
     for line in zone_file:
-      line = line.strip()
-      if line:
-        cidr = line
-        if cidr_file:
-          cidr_file.write(f'{cidr}\n')
-        if host_file:
-          try:
-            network = ipaddress.IPv6Network(cidr) if opts['ipv6'] else \
-              ipaddress.IPv4Network(cidr)
-            if network.num_addresses == 1:
-              host_file.write(f'{network.network_address}\n')
-            elif network.num_addresses == 2:
-              host_file.write(f'{network.network_address}-{network.broadcast_address}\n')
-            else:
-              start_ip = network.network_address + 1
-              end_ip = network.broadcast_address - 1
-              host_file.write(f'{start_ip}-{end_ip}\n')
-          except ValueError as e:
-            log(f'error processing line: {line} ({e})', 'warn')
+      cidr = line.strip()
+      if not cidr:
+        continue
+      if cidr_file:
+        cidr_file.write(f'{cidr}\n')
+      if host_file:
+        try:
+          host_file.write(f'{cidr_to_hostrange(cidr)}\n')
+        except ValueError as e:
+          log(f'error processing line: {cidr} ({e})', 'warn')
 
-  if cidr_file:
-    cidr_file.close()
-  if host_file:
-    host_file.close()
+  if not out:
+    if cidr_file:
+      cidr_file.close()
+    if host_file:
+      host_file.close()
 
-  if 'cidr' in opts['type'] and 'host' in opts['type']:
-    log(f'ip ranges for {country_code} saved to {country_code}-*.txt', 'good')
-  else:
-    log(f'ip ranges for {country_code} saved to '
-        f'{country_code}-{opts['type'][0]}.txt', 'good')
+    if 'cidr' in opts['type'] and 'host' in opts['type']:
+      log(f'ip ranges for {country_code} saved to {country_code}-*.list', 'good')
+    else:
+      range_type = opts['type'][0]
+      log(f'ip ranges for {country_code} saved to '
+          f'{country_code}-{range_type}.list', 'good')
 
   return
 
 
 def main():
-  log(f'{BANNER}\n\n')
+  sys.stderr.write(f'{BANNER}\n\n')
   check_argc()
   parse_cmdline()
   check_argv(opts)
 
-  zones_dir = 'zones6' if opts['ipv6'] else 'zones'
-  if not os.path.exists(zones_dir):
-    download_and_extract_zones()
+  log('w00t w00t, game started', 'info')
 
-  for code in opts['codes']:
-    process_country_file(code.strip())
+  dest = opts.get('outfile')
+  if dest:
+    try:
+      opts['out'] = sys.stdout if dest == '-' else open(dest, 'w')
+    except OSError as err:
+      log(f'could not open output file: {err}', 'error')
+
+  if opts.get('reverse'):
+    reverse_lookup(opts['reverse'])
+    if opts.get('out') and opts['out'] is not sys.stdout:
+      opts['out'].close()
+    log('game over', 'info')
+    return
+
+  codes = [c.strip() for c in opts['codes']]
+  validate_codes(codes)
+  validate_types()
+
+  zones_dir = ensure_zones(opts['ipv6'])
+
+  if 'all' in codes:
+    codes = sorted(f[:-len('.zone')] for f in os.listdir(zones_dir)
+                   if f.endswith('.zone'))
+    log(f'processing all {len(codes)} countries', 'info')
+
+  for code in codes:
+    process_country_file(code)
+
+  if opts.get('out') and opts['out'] is not sys.stdout:
+    opts['out'].close()
+    log(f'ip ranges saved to {dest}', 'good')
 
   if opts['cleanup']:
     cleanup_zones()
